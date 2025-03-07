@@ -1,0 +1,1 @@
+export default function StatsCard({ title, value, color }) { return ( <div className="border rounded shadow-sm p-4"> <h3 className="text-sm text-gray-500" style={{ color }}>{title}</h3> <p className="text-2xl font-bold">{value}</p> </div> ); }

@@ -1,0 +1,1 @@
+export default function SimpleChart({ title, height = "300px" }) { return ( <div className="border rounded p-4"> <h3 className="text-lg font-semibold mb-2">{title}</h3> <div className="bg-gray-50 rounded" style={{ height }}> <div className="h-full flex items-center justify-center"> <p className="text-gray-500">Chart visualization would appear here</p> </div> </div> </div> ); }

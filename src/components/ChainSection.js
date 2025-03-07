@@ -1,0 +1,1 @@
+import SimpleChart from "./SimpleChart"; import StatsCard from "./StatsCard"; export default function ChainSection({ chainName, chainColor, totalValue }) { return ( <div> <div className="mb-4"> <StatsCard title={`${chainName} Total`} value={totalValue} color={chainColor} /> </div> <SimpleChart title={chainName} height="250px" /> </div> ); }
