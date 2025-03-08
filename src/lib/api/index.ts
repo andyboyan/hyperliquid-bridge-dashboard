@@ -1,7 +1,13 @@
-export * from './types';
-export { useHyperlaneData, getHyperlaneTransactions, getHyperlaneStats } from './hyperlane';
-export { useDeBridgeData, getDeBridgeTransactions, getDeBridgeStats } from './debridge';
+import { BridgeTransaction, BridgeStats } from './types';
+import { useHyperlaneData } from './hyperlane';
+import { useDeBridgeData } from './debridge';
 
+// Export all types and functions
+export * from './types';
+export * from './hyperlane';
+export * from './debridge';
+
+// Combined hook for fetching data from both bridges
 export function useBridgeData(timeframe: string = '24h') {
   const hyperlane = useHyperlaneData(timeframe);
   const debridge = useDeBridgeData(timeframe);
