@@ -2,22 +2,22 @@ import axios from 'axios';
 import useSWR from 'swr';
 import { BridgeTransaction, BridgeStats, APIResponse } from './types';
 
-const HYPERLANE_API_URL = process.env.NEXT_PUBLIC_HYPERLANE_API_URL;
+const DEBRIDGE_API_URL = process.env.NEXT_PUBLIC_DEBRIDGE_API_URL;
 
-if (!HYPERLANE_API_URL) {
-  console.warn('NEXT_PUBLIC_HYPERLANE_API_URL is not set');
+if (!DEBRIDGE_API_URL) {
+  console.warn('NEXT_PUBLIC_DEBRIDGE_API_URL is not set');
 }
 
 const api = axios.create({
-  baseURL: HYPERLANE_API_URL,
+  baseURL: DEBRIDGE_API_URL,
   timeout: 10000,
 });
 
-export async function getHyperlaneTransactions(
+export async function getDeBridgeTransactions(
   timeframe: string = '24h'
 ): Promise<APIResponse<BridgeTransaction[]>> {
   try {
-    const response = await api.get<BridgeTransaction[]>('/transactions', {
+    const response = await api.get<BridgeTransaction[]>('/transfers', {
       params: { timeframe },
     });
 
@@ -25,23 +25,23 @@ export async function getHyperlaneTransactions(
       success: true,
       data: response.data.map(tx => ({
         ...tx,
-        bridgeProtocol: 'hyperlane',
+        bridgeProtocol: 'debridge',
       })),
     };
   } catch (error) {
-    console.error('Error fetching Hyperlane transactions:', error);
+    console.error('Error fetching deBridge transactions:', error);
     return {
       success: false,
-      error: 'Failed to fetch Hyperlane transactions',
+      error: 'Failed to fetch deBridge transactions',
     };
   }
 }
 
-export async function getHyperlaneStats(
+export async function getDeBridgeStats(
   timeframe: string = '24h'
 ): Promise<APIResponse<BridgeStats>> {
   try {
-    const response = await api.get<BridgeStats>('/stats', {
+    const response = await api.get<BridgeStats>('/statistics', {
       params: { timeframe },
     });
 
@@ -50,20 +50,20 @@ export async function getHyperlaneStats(
       data: response.data,
     };
   } catch (error) {
-    console.error('Error fetching Hyperlane stats:', error);
+    console.error('Error fetching deBridge stats:', error);
     return {
       success: false,
-      error: 'Failed to fetch Hyperlane statistics',
+      error: 'Failed to fetch deBridge statistics',
     };
   }
 }
 
-export async function getHyperlaneChainActivity(
+export async function getDeBridgeChainActivity(
   chainId: string,
   timeframe: string = '24h'
 ): Promise<APIResponse<BridgeTransaction[]>> {
   try {
-    const response = await api.get<BridgeTransaction[]>(`/chain/${chainId}/activity`, {
+    const response = await api.get<BridgeTransaction[]>(`/chains/${chainId}/transfers`, {
       params: { timeframe },
     });
 
@@ -71,28 +71,28 @@ export async function getHyperlaneChainActivity(
       success: true,
       data: response.data.map(tx => ({
         ...tx,
-        bridgeProtocol: 'hyperlane',
+        bridgeProtocol: 'debridge',
       })),
     };
   } catch (error) {
-    console.error(`Error fetching Hyperlane chain activity for ${chainId}:`, error);
+    console.error(`Error fetching deBridge chain activity for ${chainId}:`, error);
     return {
       success: false,
-      error: `Failed to fetch Hyperlane activity for chain ${chainId}`,
+      error: `Failed to fetch deBridge activity for chain ${chainId}`,
     };
   }
 }
 
 // Hook for real-time data fetching
-export function useHyperlaneData(timeframe: string = '24h') {
+export function useDeBridgeData(timeframe: string = '24h') {
   const { data: transactions, error: txError } = useSWR(
-    `/hyperlane/transactions?timeframe=${timeframe}`,
-    () => getHyperlaneTransactions(timeframe)
+    `/debridge/transfers?timeframe=${timeframe}`,
+    () => getDeBridgeTransactions(timeframe)
   );
 
   const { data: stats, error: statsError } = useSWR(
-    `/hyperlane/stats?timeframe=${timeframe}`,
-    () => getHyperlaneStats(timeframe)
+    `/debridge/statistics?timeframe=${timeframe}`,
+    () => getDeBridgeStats(timeframe)
   );
 
   return {
