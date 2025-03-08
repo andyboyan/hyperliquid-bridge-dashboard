@@ -1,104 +1,44 @@
 import axios from 'axios';
 import useSWR from 'swr';
-import { BridgeTransaction, BridgeStats, APIResponse } from './types';
+import { BridgeTransaction, BridgeStats } from './types';
 
-const HYPERLANE_API_URL = process.env.NEXT_PUBLIC_HYPERLANE_API_URL;
+const API_BASE = process.env.NEXT_PUBLIC_HYPERLANE_API_URL;
 
-if (!HYPERLANE_API_URL) {
-  console.warn('NEXT_PUBLIC_HYPERLANE_API_URL is not set');
-}
-
-const api = axios.create({
-  baseURL: HYPERLANE_API_URL,
-  timeout: 10000,
-});
-
-export async function getHyperlaneTransactions(
-  timeframe: string = '24h'
-): Promise<APIResponse<BridgeTransaction[]>> {
+export async function getHyperlaneTransactions(timeframe: string = '24h'): Promise<BridgeTransaction[]> {
   try {
-    const response = await api.get<BridgeTransaction[]>('/transactions', {
-      params: { timeframe },
-    });
-
-    return {
-      success: true,
-      data: response.data.map(tx => ({
-        ...tx,
-        bridgeProtocol: 'hyperlane',
-      })),
-    };
+    const response = await axios.get(`${API_BASE}/transactions?timeframe=${timeframe}`);
+    return response.data;
   } catch (error) {
     console.error('Error fetching Hyperlane transactions:', error);
-    return {
-      success: false,
-      error: 'Failed to fetch Hyperlane transactions',
-    };
+    return [];
   }
 }
 
-export async function getHyperlaneStats(
-  timeframe: string = '24h'
-): Promise<APIResponse<BridgeStats>> {
+export async function getHyperlaneStats(timeframe: string = '24h'): Promise<BridgeStats> {
   try {
-    const response = await api.get<BridgeStats>('/stats', {
-      params: { timeframe },
-    });
-
-    return {
-      success: true,
-      data: response.data,
-    };
+    const response = await axios.get(`${API_BASE}/stats?timeframe=${timeframe}`);
+    return response.data;
   } catch (error) {
     console.error('Error fetching Hyperlane stats:', error);
-    return {
-      success: false,
-      error: 'Failed to fetch Hyperlane statistics',
-    };
+    throw error;
   }
 }
 
-export async function getHyperlaneChainActivity(
-  chainId: string,
-  timeframe: string = '24h'
-): Promise<APIResponse<BridgeTransaction[]>> {
-  try {
-    const response = await api.get<BridgeTransaction[]>(`/chain/${chainId}/activity`, {
-      params: { timeframe },
-    });
-
-    return {
-      success: true,
-      data: response.data.map(tx => ({
-        ...tx,
-        bridgeProtocol: 'hyperlane',
-      })),
-    };
-  } catch (error) {
-    console.error(`Error fetching Hyperlane chain activity for ${chainId}:`, error);
-    return {
-      success: false,
-      error: `Failed to fetch Hyperlane activity for chain ${chainId}`,
-    };
-  }
-}
-
-// Hook for real-time data fetching
 export function useHyperlaneData(timeframe: string = '24h') {
   const { data: transactions, error: txError } = useSWR(
-    `/hyperlane/transactions?timeframe=${timeframe}`,
+    `hyperlane/transactions/${timeframe}`,
     () => getHyperlaneTransactions(timeframe)
   );
 
   const { data: stats, error: statsError } = useSWR(
-    `/hyperlane/stats?timeframe=${timeframe}`,
+    `hyperlane/stats/${timeframe}`,
     () => getHyperlaneStats(timeframe)
   );
 
   return {
-    transactions: transactions?.data || [],
-    stats: stats?.data,
+    transactions: transactions || [],
+    stats,
     isLoading: !transactions && !txError && !stats && !statsError,
-    isError: txError || statsError,
+    isError: txError || statsError
   };
 }

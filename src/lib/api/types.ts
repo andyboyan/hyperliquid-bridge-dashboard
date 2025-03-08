@@ -6,7 +6,7 @@ export interface BridgeTransaction {
     asset: string;
     amount: string;
     usdValue: number;
-    status: 'completed' | 'pending' | 'failed';
+    status: string;
     txHash: string;
     bridgeProtocol: 'hyperlane' | 'debridge';
   }
@@ -36,7 +36,6 @@ export interface BridgeTransaction {
   }
   
   export interface APIResponse<T> {
-    success: boolean;
-    data?: T;
+    data: T;
     error?: string;
   }

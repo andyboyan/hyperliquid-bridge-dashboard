@@ -1,104 +1,44 @@
 import axios from 'axios';
 import useSWR from 'swr';
-import { BridgeTransaction, BridgeStats, APIResponse } from './types';
+import { BridgeTransaction, BridgeStats } from './types';
 
-const DEBRIDGE_API_URL = process.env.NEXT_PUBLIC_DEBRIDGE_API_URL;
+const API_BASE = process.env.NEXT_PUBLIC_DEBRIDGE_API_URL;
 
-if (!DEBRIDGE_API_URL) {
-  console.warn('NEXT_PUBLIC_DEBRIDGE_API_URL is not set');
-}
-
-const api = axios.create({
-  baseURL: DEBRIDGE_API_URL,
-  timeout: 10000,
-});
-
-export async function getDeBridgeTransactions(
-  timeframe: string = '24h'
-): Promise<APIResponse<BridgeTransaction[]>> {
+export async function getDeBridgeTransactions(timeframe: string = '24h'): Promise<BridgeTransaction[]> {
   try {
-    const response = await api.get<BridgeTransaction[]>('/transfers', {
-      params: { timeframe },
-    });
-
-    return {
-      success: true,
-      data: response.data.map(tx => ({
-        ...tx,
-        bridgeProtocol: 'debridge',
-      })),
-    };
+    const response = await axios.get(`${API_BASE}/transfers?timeframe=${timeframe}`);
+    return response.data;
   } catch (error) {
     console.error('Error fetching deBridge transactions:', error);
-    return {
-      success: false,
-      error: 'Failed to fetch deBridge transactions',
-    };
+    return [];
   }
 }
 
-export async function getDeBridgeStats(
-  timeframe: string = '24h'
-): Promise<APIResponse<BridgeStats>> {
+export async function getDeBridgeStats(timeframe: string = '24h'): Promise<BridgeStats> {
   try {
-    const response = await api.get<BridgeStats>('/statistics', {
-      params: { timeframe },
-    });
-
-    return {
-      success: true,
-      data: response.data,
-    };
+    const response = await axios.get(`${API_BASE}/statistics?timeframe=${timeframe}`);
+    return response.data;
   } catch (error) {
     console.error('Error fetching deBridge stats:', error);
-    return {
-      success: false,
-      error: 'Failed to fetch deBridge statistics',
-    };
+    throw error;
   }
 }
 
-export async function getDeBridgeChainActivity(
-  chainId: string,
-  timeframe: string = '24h'
-): Promise<APIResponse<BridgeTransaction[]>> {
-  try {
-    const response = await api.get<BridgeTransaction[]>(`/chains/${chainId}/transfers`, {
-      params: { timeframe },
-    });
-
-    return {
-      success: true,
-      data: response.data.map(tx => ({
-        ...tx,
-        bridgeProtocol: 'debridge',
-      })),
-    };
-  } catch (error) {
-    console.error(`Error fetching deBridge chain activity for ${chainId}:`, error);
-    return {
-      success: false,
-      error: `Failed to fetch deBridge activity for chain ${chainId}`,
-    };
-  }
-}
-
-// Hook for real-time data fetching
 export function useDeBridgeData(timeframe: string = '24h') {
   const { data: transactions, error: txError } = useSWR(
-    `/debridge/transfers?timeframe=${timeframe}`,
+    `debridge/transfers/${timeframe}`,
     () => getDeBridgeTransactions(timeframe)
   );
 
   const { data: stats, error: statsError } = useSWR(
-    `/debridge/statistics?timeframe=${timeframe}`,
+    `debridge/stats/${timeframe}`,
     () => getDeBridgeStats(timeframe)
   );
 
   return {
-    transactions: transactions?.data || [],
-    stats: stats?.data,
+    transactions: transactions || [],
+    stats,
     isLoading: !transactions && !txError && !stats && !statsError,
-    isError: txError || statsError,
+    isError: txError || statsError
   };
 }
