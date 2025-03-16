@@ -37,12 +37,12 @@ const TOKEN_ADDRESSES: Record<string, string> = {
   // Base
   '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'USDC',
   '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': 'DAI',
-  '0x4200000000000000000000000000000000000006': 'WETH',
+  '0x4200000000000000000000000000000000000006_base': 'WETH',
   // Optimism
   '0x7f5c764cbc14f9669b88837ca1490cca17c31607': 'USDC',
   '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58': 'USDT',
   '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1_optimism': 'DAI',
-  '0x4200000000000000000000000000000000000006': 'WETH',
+  '0x4200000000000000000000000000000000000006_optimism': 'WETH',
   // Hyperliquid - add any known Hyperliquid token addresses here
   // ...
 };
@@ -107,7 +107,8 @@ function extractAssetInfo(message: HyperlaneMessage) {
         if (amounts.length > 0 && amounts[0] !== address) {
           try {
             // Parse as hex and divide by appropriate power of 10 based on token
-            const decimal = parseInt(amounts[0], 16);
+            const hexValue = amounts[0] || '0x0'; // Provide a default if undefined
+            const decimal = parseInt(hexValue, 16);
             let amount = decimal;
             
             // Apply token-specific decimal conversion
@@ -277,7 +278,7 @@ export async function getHyperlaneTransactions(timeframe: string = '24h'): Promi
         amount: amount,
         usdValue: usdValue,
         status: msg.status || 'delivered',
-        txHash: msg.originTransactionHash || 'unknown',
+        txHash: msg.transactionHash || 'unknown',
         bridgeProtocol: 'hyperlane'
       };
     });
