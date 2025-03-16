@@ -624,7 +624,18 @@ function generateMockStats(): BridgeStats {
 }
 
 // Add a utility function to test the API directly
-export async function testHyperlaneApiConnection(): Promise<{success: boolean, message: string, data?: any}> {
+export interface ApiTestResult {
+  success: boolean;
+  message: string;
+  data?: {
+    sampleMessages?: Array<Record<string, unknown>>;
+    directResponse?: Record<string, unknown>;
+    proxyResponse?: Record<string, unknown>;
+    error?: Error;
+  };
+}
+
+export async function testHyperlaneApiConnection(): Promise<ApiTestResult> {
   try {
     // First try the direct API endpoint
     console.log('Testing direct API connection to Hyperlane...');
@@ -720,7 +731,7 @@ export async function testHyperlaneApiConnection(): Promise<{success: boolean, m
     return {
       success: false,
       message: `API test error: ${error.message}`,
-      data: { error }
+      data: { error: error as Error }
     };
   }
 }
