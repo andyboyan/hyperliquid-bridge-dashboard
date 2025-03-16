@@ -728,10 +728,17 @@ export async function testHyperlaneApiConnection(): Promise<ApiTestResult> {
     };
   } catch (error) {
     console.error('API test error:', error);
+    // Properly handle the unknown error type
+    const errorMessage = error instanceof Error 
+      ? error.message 
+      : 'Unknown error occurred';
+    
     return {
       success: false,
-      message: `API test error: ${error.message}`,
-      data: { error: error as Error }
+      message: `API test error: ${errorMessage}`,
+      data: { 
+        error: error instanceof Error ? error : new Error(String(error))
+      }
     };
   }
 }
