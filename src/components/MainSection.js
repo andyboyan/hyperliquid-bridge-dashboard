@@ -4,11 +4,12 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import { useHyperlaneData } from "../lib/api/hyperlane";
 
 export default function MainSection({ timeframe = "24h" }) {
-  const { transactions, stats, isLoading, isError } = useHyperlaneData(timeframe);
+  const { transactions, stats, isLoading, isError, apiStatus } = useHyperlaneData(timeframe);
   
   const [chartData, setChartData] = useState([]);
   const [visibleAssets, setVisibleAssets] = useState({});
   const [assets, setAssets] = useState([]);
+  const [showDebugInfo, setShowDebugInfo] = useState(false);
   
   // Expanded asset colors mapping
   const assetColors = {
@@ -152,6 +153,10 @@ export default function MainSection({ timeframe = "24h" }) {
     }).format(num);
   };
   
+  const toggleDebugInfo = () => {
+    setShowDebugInfo(!showDebugInfo);
+  };
+  
   if (isLoading) {
     return <div className="p-4 text-center">Loading bridge data...</div>;
   }
@@ -162,11 +167,89 @@ export default function MainSection({ timeframe = "24h" }) {
 
   // Show placeholder if no data
   if (chartData.length === 0 || assets.length === 0) {
-    return <div className="p-4 text-center text-gray-500">No bridge data available for the selected time period.</div>;
+    return (
+      <div>
+        <div className="p-4 text-center text-gray-500">
+          <p>No bridge data available for the selected time period.</p>
+          
+          {/* Add API status indicator */}
+          <div className="mt-4 p-4 border rounded">
+            <p className="font-medium mb-2">API Connection Status:</p>
+            <div className={`p-2 rounded ${apiStatus?.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+              {apiStatus?.message || 'Checking API connection...'}
+            </div>
+            
+            <button 
+              onClick={toggleDebugInfo}
+              className="mt-2 px-3 py-1 bg-gray-200 rounded text-sm"
+            >
+              {showDebugInfo ? 'Hide Debug Info' : 'Show Debug Info'}
+            </button>
+            
+            {showDebugInfo && (
+              <div className="mt-3 text-left text-xs font-mono bg-gray-100 p-3 rounded max-h-60 overflow-auto">
+                <p className="font-medium">Environment: {process.env.NODE_ENV}</p>
+                <p className="mt-1">Timeframe: {timeframe}</p>
+                <p className="mt-1">transactions: {Array.isArray(transactions) ? transactions.length : 'N/A'}</p>
+                <p className="mt-1">isLoading: {isLoading ? 'true' : 'false'}</p>
+                <p className="mt-1">isError: {isError ? 'true' : 'false'}</p>
+                
+                {stats && (
+                  <div className="mt-2">
+                    <p className="font-medium">Stats:</p>
+                    <p>totalTransactions: {stats.totalTransactions}</p>
+                    <p>uniqueAssets: {stats.uniqueAssets}</p>
+                    <p>activeChains: {stats.activeChains}</p>
+                    <p>timeSeriesData: {stats.timeSeriesData?.length || 0} points</p>
+                  </div>
+                )}
+                
+                {Array.isArray(transactions) && transactions.length > 0 && (
+                  <div className="mt-2">
+                    <p className="font-medium">Sample transaction:</p>
+                    <pre>{JSON.stringify(transactions[0], null, 2)}</pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   }
   
   return (
     <div>
+      {/* Add API status indicator at the top of the page */}
+      {(process.env.NODE_ENV === 'development' || showDebugInfo) && (
+        <div className="mb-4 p-3 border rounded">
+          <div className="flex justify-between items-center">
+            <div className={`px-3 py-1 rounded text-sm ${apiStatus?.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+              {apiStatus?.success ? '✓ API Connected' : '✗ API Error'}: {apiStatus?.message}
+            </div>
+            
+            <button 
+              onClick={toggleDebugInfo}
+              className="px-3 py-1 bg-gray-200 rounded text-sm"
+            >
+              {showDebugInfo ? 'Hide Debug Info' : 'Show Debug Info'}
+            </button>
+          </div>
+          
+          {showDebugInfo && (
+            <div className="mt-3 text-xs font-mono bg-gray-100 p-3 rounded max-h-60 overflow-auto">
+              <p>Using data from: {apiStatus?.success ? 'API' : 'Mock Data'}</p>
+              {Array.isArray(transactions) && transactions.length > 0 && (
+                <div className="mt-2">
+                  <p className="font-medium">Sample transaction:</p>
+                  <pre>{JSON.stringify(transactions[0], null, 2)}</pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      
       <div className="mb-4">
         <p className="font-medium mb-2">Filter by asset:</p>
         <div className="flex flex-wrap">

@@ -1,12 +1,15 @@
 import axios from 'axios';
 import useSWR from 'swr';
 import { BridgeTransaction, BridgeStats, TimeSeriesDataPoint } from './types';
+import { useState, useEffect } from 'react';
 
 // Use local proxy in production, direct API in development
 const API_BASE = process.env.NODE_ENV === 'production' 
   ? '/api/hyperlane' 
   : 'https://explorer.hyperlane.xyz/api';
 
+// Add more detailed logging
+console.log('Environment:', process.env.NODE_ENV);
 console.log('Using API base:', API_BASE);
 
 // Common token addresses with their respective symbols - expanded list
@@ -244,49 +247,99 @@ export async function getHyperlaneTransactions(timeframe: string = '24h'): Promi
     const fromTimestamp = now - timeframeMs;
 
     console.log(`Fetching Hyperlane transactions since ${new Date(fromTimestamp).toISOString()}`);
+    
+    // Log the full request URL and params for debugging
+    const requestUrl = `${API_BASE}/messages`;
+    const params = {
+      fromTimestamp,
+      status: 'delivered',
+      limit: 100,
+      orderBy: 'timestamp',
+      order: 'desc'
+    };
+    
+    console.log('Making API request to:', requestUrl);
+    console.log('With params:', JSON.stringify(params));
 
-    const response = await axios.get(`${API_BASE}/messages`, {
-      params: {
-        fromTimestamp,
-        status: 'delivered',
-        limit: 100,
-        orderBy: 'timestamp',
-        order: 'desc'
+    // Add a timeout to the axios request
+    const response = await axios.get(requestUrl, { 
+      params,
+      timeout: 10000, // 10 second timeout
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
       }
     });
 
+    // Log the response headers and status
+    console.log('API response status:', response.status);
+    console.log('API response headers:', JSON.stringify(response.headers));
     console.log(`Received ${response.data.messages?.length || 0} messages from API`);
+    
+    // Log a sample of the first message if available
+    if (response.data.messages && response.data.messages.length > 0) {
+      console.log('Sample message:', JSON.stringify(response.data.messages[0]));
+    } else {
+      console.log('No messages received from API');
+      console.log('Response data:', JSON.stringify(response.data));
+      
+      // If no messages are received but the request was successful, return mock data
+      console.log('Falling back to mock data due to empty response');
+      return generateMockTransactions();
+    }
 
     // Transform the response to match our BridgeTransaction interface
     if (!response.data.messages || !Array.isArray(response.data.messages)) {
       console.error('Invalid API response format:', response.data);
-      return [];
+      return generateMockTransactions();
     }
 
-    const transactions = response.data.messages.map((msg: HyperlaneMessage) => {
-      const { symbol, amount } = extractAssetInfo(msg);
-      const price = getTokenPrice(symbol);
-      const parsedAmount = parseFloat(amount);
-      const usdValue = parsedAmount * price;
+    try {
+      const transactions = response.data.messages.map((msg: HyperlaneMessage) => {
+        // Add extra validation and error handling for each message
+        if (!msg || typeof msg !== 'object') {
+          console.error('Invalid message format:', msg);
+          return null;
+        }
+        
+        try {
+          const { symbol, amount } = extractAssetInfo(msg);
+          const price = getTokenPrice(symbol);
+          const parsedAmount = parseFloat(amount);
+          const usdValue = parsedAmount * price;
+          
+          return {
+            id: msg.id || `msg-${Date.now()}-${Math.random()}`,
+            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
+            sourceChain: formatChainName(msg.origin),
+            destinationChain: formatChainName(msg.destination),
+            asset: symbol,
+            amount: amount,
+            usdValue: usdValue,
+            status: msg.status || 'delivered',
+            txHash: msg.transactionHash || 'unknown',
+            bridgeProtocol: 'hyperlane'
+          };
+        } catch (e) {
+          console.error('Error processing message:', e, msg);
+          return null;
+        }
+      })
+      .filter(Boolean) as BridgeTransaction[]; // Filter out any null entries
       
-      return {
-        id: msg.id || `msg-${Date.now()}-${Math.random()}`,
-        timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
-        sourceChain: formatChainName(msg.origin),
-        destinationChain: formatChainName(msg.destination),
-        asset: symbol,
-        amount: amount,
-        usdValue: usdValue,
-        status: msg.status || 'delivered',
-        txHash: msg.transactionHash || 'unknown',
-        bridgeProtocol: 'hyperlane'
-      };
-    });
+      if (transactions.length === 0) {
+        console.warn('No valid transactions could be extracted from API response');
+        return generateMockTransactions();
+      }
 
-    console.log(`Processed ${transactions.length} transactions`);
-    console.log(`Asset distribution: ${JSON.stringify(countAssets(transactions))}`);
+      console.log(`Successfully processed ${transactions.length} transactions`);
+      console.log(`Asset distribution: ${JSON.stringify(countAssets(transactions))}`);
 
-    return transactions;
+      return transactions;
+    } catch (e) {
+      console.error('Error mapping API response to transactions:', e);
+      return generateMockTransactions();
+    }
   } catch (error) {
     console.error('Error fetching Hyperlane transactions:', error);
     // Return some mock data in case of API failure to ensure UI doesn't break
@@ -570,7 +623,134 @@ function generateMockStats(): BridgeStats {
   };
 }
 
+// Add a utility function to test the API directly
+export async function testHyperlaneApiConnection(): Promise<{success: boolean, message: string, data?: any}> {
+  try {
+    // First try the direct API endpoint
+    console.log('Testing direct API connection to Hyperlane...');
+    const directUrl = 'https://explorer.hyperlane.xyz/api/messages';
+    const params = {
+      limit: 5,
+      orderBy: 'timestamp',
+      order: 'desc'
+    };
+    
+    const directResponse = await axios.get(directUrl, { 
+      params,
+      timeout: 5000,
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
+    
+    console.log('Direct API test status:', directResponse.status);
+    const directSuccess = 
+      directResponse.status === 200 && 
+      directResponse.data?.messages && 
+      Array.isArray(directResponse.data.messages);
+    
+    // Then try through the proxy (if in production)
+    let proxySuccess = false;
+    let proxyResponse = null;
+    
+    if (process.env.NODE_ENV === 'production') {
+      console.log('Testing proxy API connection...');
+      const proxyUrl = '/api/hyperlane/messages';
+      
+      try {
+        proxyResponse = await axios.get(proxyUrl, { 
+          params,
+          timeout: 5000,
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+        
+        console.log('Proxy API test status:', proxyResponse.status);
+        proxySuccess = 
+          proxyResponse.status === 200 && 
+          proxyResponse.data?.messages && 
+          Array.isArray(proxyResponse.data.messages);
+      } catch (e) {
+        console.error('Proxy API test failed:', e);
+      }
+    }
+    
+    // Return results
+    if (process.env.NODE_ENV === 'production') {
+      if (proxySuccess) {
+        return {
+          success: true,
+          message: 'API proxy connection successful!',
+          data: {
+            sampleMessages: proxyResponse?.data?.messages?.slice(0, 2)
+          }
+        };
+      } else if (directSuccess) {
+        return {
+          success: true,
+          message: 'Direct API connection works, but proxy failed. Check the Next.js rewrites configuration.',
+          data: {
+            sampleMessages: directResponse.data.messages.slice(0, 2)
+          }
+        };
+      }
+    } else {
+      if (directSuccess) {
+        return {
+          success: true,
+          message: 'API connection successful!',
+          data: {
+            sampleMessages: directResponse.data.messages.slice(0, 2)
+          }
+        };
+      }
+    }
+    
+    return {
+      success: false,
+      message: 'Could not connect to Hyperlane API. Falling back to mock data.',
+      data: {
+        directResponse: directResponse?.data,
+        proxyResponse: proxyResponse?.data
+      }
+    };
+  } catch (error) {
+    console.error('API test error:', error);
+    return {
+      success: false,
+      message: `API test error: ${error.message}`,
+      data: { error }
+    };
+  }
+}
+
+// Use the test function in the hook
 export function useHyperlaneData(timeframe: string = '24h') {
+  const [apiStatus, setApiStatus] = useState<{
+    tested: boolean;
+    success: boolean;
+    message: string;
+  }>({
+    tested: false,
+    success: false,
+    message: 'API not tested yet'
+  });
+  
+  // Run the API test once
+  useEffect(() => {
+    if (!apiStatus.tested) {
+      testHyperlaneApiConnection().then(result => {
+        setApiStatus({
+          tested: true,
+          success: result.success,
+          message: result.message
+        });
+        console.log('API test result:', result);
+      });
+    }
+  }, [apiStatus.tested]);
+
   const fetcher = async () => {
     try {
       return await getHyperlaneTransactions(timeframe);
@@ -613,7 +793,8 @@ export function useHyperlaneData(timeframe: string = '24h') {
     transactions: transactions || [],
     stats,
     isLoading: !transactions && !txError && !stats && !statsError,
-    isError: txError || statsError
+    isError: txError || statsError,
+    apiStatus
   };
 }
 

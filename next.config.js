@@ -2,6 +2,13 @@
 const nextConfig = {
   reactStrictMode: true,
   
+  // Enable detailed logging for API requests in both development and production
+  logging: {
+    fetches: {
+      fullUrl: true,
+    },
+  },
+  
   // Add async headers for CORS
   async headers() {
     return [
@@ -18,12 +25,14 @@ const nextConfig = {
     ]
   },
   
-  // Add proxy for API requests to avoid CORS issues
+  // Enhanced proxy for API requests to avoid CORS issues
   async rewrites() {
     return [
       {
         source: '/api/hyperlane/:path*',
         destination: 'https://explorer.hyperlane.xyz/api/:path*',
+        // Add basePath: false to make sure the proxy works in all environments
+        basePath: false,
       },
     ]
   }
