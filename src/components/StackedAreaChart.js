@@ -110,7 +110,7 @@ export default function StackedAreaChart({ title, chain, height = "300px", showF
     formattedData.sort((a, b) => new Date(a.date) - new Date(b.date));
     console.log(`Setting chartData for ${chain}:`, formattedData.length, 'data points');
     setChartData(formattedData);
-  }, [timeSeriesData, chain]);
+  }, [timeSeriesData, chain, visibleAssets]);
   
   const formatCurrency = (value) => {
     return new Intl.NumberFormat("en-US", { 

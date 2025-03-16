@@ -127,7 +127,7 @@ export default function MainSection({ timeframe = "24h" }) {
       console.log("Setting chartData in MainSection:", formattedData.length, "data points");
       setChartData(formattedData);
     }
-  }, [stats, transactions]);
+  }, [stats, transactions, visibleAssets]);
   
   const toggleAsset = (asset) => {
     setVisibleAssets(prev => ({ ...prev, [asset]: !prev[asset] }));

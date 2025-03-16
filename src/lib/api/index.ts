@@ -1,4 +1,4 @@
-import { BridgeTransaction, BridgeStats } from './types';
+// Import hooks for bridge data
 import { useHyperlaneData } from './hyperlane';
 import { useDeBridgeData } from './debridge';
 

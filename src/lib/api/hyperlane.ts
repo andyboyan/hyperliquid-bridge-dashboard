@@ -62,8 +62,22 @@ function getTokenSymbolFromAddress(address: string): string | null {
   return TOKEN_ADDRESSES[lowerCaseAddress] || null;
 }
 
+// Define interface for Hyperlane messages
+export interface HyperlaneMessage {
+  id: string;
+  origin: string;
+  destination: string;
+  body?: string;
+  sender?: string;
+  recipient?: string;
+  status?: string;
+  timestamp?: number;
+  blockNumber?: number;
+  transactionHash?: string;
+}
+
 // Debug function to log message details for troubleshooting
-function logMessageDetails(message: any, extractedInfo: { symbol: string, amount: string }) {
+function logMessageDetails(message: HyperlaneMessage, extractedInfo: { symbol: string, amount: string }) {
   if (process.env.NODE_ENV !== 'production') {
     console.log('Message ID:', message.id);
     console.log('Origin:', message.origin);
@@ -74,7 +88,7 @@ function logMessageDetails(message: any, extractedInfo: { symbol: string, amount
 }
 
 // Improved function to extract asset information from message body
-function extractAssetInfo(message: any) {
+function extractAssetInfo(message: HyperlaneMessage) {
   try {
     const body = message.body || '';
     let extractedInfo = { symbol: 'Unknown', amount: '1' };
@@ -248,7 +262,7 @@ export async function getHyperlaneTransactions(timeframe: string = '24h'): Promi
       return [];
     }
 
-    const transactions = response.data.messages.map((msg: any) => {
+    const transactions = response.data.messages.map((msg: HyperlaneMessage) => {
       const { symbol, amount } = extractAssetInfo(msg);
       const price = getTokenPrice(symbol);
       const parsedAmount = parseFloat(amount);
