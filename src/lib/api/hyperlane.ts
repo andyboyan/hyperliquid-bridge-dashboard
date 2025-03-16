@@ -41,7 +41,7 @@ const TOKEN_ADDRESSES: Record<string, string> = {
   // Optimism
   '0x7f5c764cbc14f9669b88837ca1490cca17c31607': 'USDC',
   '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58': 'USDT',
-  '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1': 'DAI',
+  '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1_optimism': 'DAI',
   '0x4200000000000000000000000000000000000006': 'WETH',
   // Hyperliquid - add any known Hyperliquid token addresses here
   // ...
