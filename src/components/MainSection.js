@@ -1,15 +1,16 @@
 "use client";
 import { useState, useEffect } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { useHyperlaneData } from "../lib/api/hyperlane";
+import { useHyperlaneData, getDiscoveredAssets, getDiscoveredChains } from "../lib/api/hyperlane";
 
-export default function MainSection({ timeframe = "24h" }) {
-  const { transactions, stats, isLoading, isError, apiStatus } = useHyperlaneData(timeframe);
+export default function MainSection() {
+  const { transactions, stats, isLoading, isError, apiStatus } = useHyperlaneData();
   
   const [chartData, setChartData] = useState([]);
   const [visibleAssets, setVisibleAssets] = useState({});
   const [assets, setAssets] = useState([]);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
+  const [selectedChain, setSelectedChain] = useState("all");
   
   // Expanded asset colors mapping
   const assetColors = {
@@ -79,56 +80,69 @@ export default function MainSection({ timeframe = "24h" }) {
     }
   }, [transactions, stats]);
   
-  // Process transaction data for the chart
   useEffect(() => {
-    if (!stats || !transactions || transactions.length === 0) return;
+    if (!transactions || transactions.length === 0) return;
     
-    // Extract unique assets and initialize visibility
-    const uniqueAssets = new Set();
-    transactions.forEach(tx => uniqueAssets.add(tx.asset));
+    // Get all discovered assets
+    const discoveredAssets = getDiscoveredAssets();
+    setAssets(discoveredAssets);
     
-    const assetList = Array.from(uniqueAssets);
-    console.log("Setting assets in MainSection:", assetList);
-    setAssets(assetList);
+    // Initialize all assets as visible
+    const initialVisibility = {};
+    discoveredAssets.forEach(asset => {
+      initialVisibility[asset] = true;
+    });
+    setVisibleAssets(initialVisibility);
     
-    // Initialize visible assets if not already set
-    const currentAssetKeys = Object.keys(visibleAssets);
-    if (currentAssetKeys.length === 0 || !assetList.every(asset => currentAssetKeys.includes(asset))) {
-      const initialVisibility = {};
-      assetList.forEach(asset => {
-        // Keep existing visibility preferences or set to true for new assets
-        initialVisibility[asset] = visibleAssets[asset] !== undefined ? visibleAssets[asset] : true;
-      });
-      setVisibleAssets(initialVisibility);
-    }
+    // Process data for chart
+    processChartData();
+  }, [transactions]);
+  
+  const processChartData = () => {
+    if (!transactions || transactions.length === 0) return;
     
-    // Process time series data for the chart
-    if (stats.timeSeriesData && stats.timeSeriesData.length > 0) {
-      // Group by date
-      const dateMap = {};
-      stats.timeSeriesData.forEach(point => {
-        const date = new Date(point.timestamp).toISOString().split('T')[0];
-        if (!dateMap[date]) {
-          dateMap[date] = {};
-        }
-        dateMap[date][point.asset] = (dateMap[date][point.asset] || 0) + point.value;
-      });
+    // Group transactions by date
+    const groupedByDate = {};
+    
+    transactions.forEach(tx => {
+      // Skip if filtering by chain and this transaction doesn't match
+      if (selectedChain !== "all" && tx.sourceChain !== selectedChain && tx.destinationChain !== selectedChain) {
+        return;
+      }
       
-      // Convert to chart format
-      const formattedData = Object.entries(dateMap).map(([date, assets]) => {
-        const entry = { date: new Date(date).toLocaleDateString() };
-        Object.entries(assets).forEach(([asset, value]) => {
-          entry[asset] = value;
+      const date = new Date(tx.timestamp).toLocaleDateString();
+      const asset = tx.asset || "Unknown";
+      const amount = parseFloat(tx.amount) || 0;
+      
+      if (!groupedByDate[date]) {
+        groupedByDate[date] = {};
+      }
+      
+      if (!groupedByDate[date][asset]) {
+        groupedByDate[date][asset] = 0;
+      }
+      
+      groupedByDate[date][asset] += amount;
+    });
+    
+    // Convert to chart data format
+    const data = Object.keys(groupedByDate)
+      .sort((a, b) => new Date(a) - new Date(b))
+      .map(date => {
+        const entry = { date };
+        Object.keys(groupedByDate[date]).forEach(asset => {
+          entry[asset] = groupedByDate[date][asset];
         });
         return entry;
       });
-      
-      // Sort by date
-      formattedData.sort((a, b) => new Date(a.date) - new Date(b.date));
-      console.log("Setting chartData in MainSection:", formattedData.length, "data points");
-      setChartData(formattedData);
-    }
-  }, [stats, transactions, visibleAssets]);
+    
+    setChartData(data);
+  };
+  
+  // Update chart when chain filter changes
+  useEffect(() => {
+    processChartData();
+  }, [selectedChain]);
   
   const toggleAsset = (asset) => {
     setVisibleAssets(prev => ({ ...prev, [asset]: !prev[asset] }));
@@ -189,7 +203,7 @@ export default function MainSection({ timeframe = "24h" }) {
             {showDebugInfo && (
               <div className="mt-3 text-left text-xs font-mono bg-gray-100 p-3 rounded max-h-60 overflow-auto">
                 <p className="font-medium">Environment: {process.env.NODE_ENV}</p>
-                <p className="mt-1">Timeframe: {timeframe}</p>
+                <p className="mt-1">Timeframe: {selectedChain}</p>
                 <p className="mt-1">transactions: {Array.isArray(transactions) ? transactions.length : 'N/A'}</p>
                 <p className="mt-1">isLoading: {isLoading ? 'true' : 'false'}</p>
                 <p className="mt-1">isError: {isError ? 'true' : 'false'}</p>
@@ -219,100 +233,139 @@ export default function MainSection({ timeframe = "24h" }) {
   }
   
   return (
-    <div>
-      {/* Add API status indicator at the top of the page */}
-      {(process.env.NODE_ENV === 'development' || showDebugInfo) && (
-        <div className="mb-4 p-3 border rounded">
-          <div className="flex justify-between items-center">
-            <div className={`px-3 py-1 rounded text-sm ${apiStatus?.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-              {apiStatus?.success ? '✓ API Connected' : '✗ API Error'}: {apiStatus?.message}
-            </div>
-            
-            <button 
-              onClick={toggleDebugInfo}
-              className="px-3 py-1 bg-gray-200 rounded text-sm"
-            >
-              {showDebugInfo ? 'Hide Debug Info' : 'Show Debug Info'}
-            </button>
+    <div className="mt-10">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-semibold">Detailed Analysis</h2>
+        <div className="flex space-x-2">
+          <select 
+            value={selectedChain} 
+            onChange={(e) => setSelectedChain(e.target.value)}
+            className="px-3 py-1 border rounded-md text-sm"
+          >
+            <option value="all">All Chains</option>
+            {getDiscoveredChains().map(chain => (
+              <option key={chain} value={chain}>{chain}</option>
+            ))}
+          </select>
+          <button 
+            onClick={toggleDebugInfo} 
+            className="px-3 py-1 border rounded-md text-sm hover:bg-gray-100"
+          >
+            {showDebugInfo ? "Hide Debug" : "Show Debug"}
+          </button>
+        </div>
+      </div>
+      
+      {showDebugInfo && (
+        <div className="mb-6 p-4 bg-gray-100 rounded-lg text-sm">
+          <h3 className="font-semibold mb-2">API Status</h3>
+          <pre className="whitespace-pre-wrap">{JSON.stringify(apiStatus, null, 2)}</pre>
+          <h3 className="font-semibold mt-4 mb-2">Discovered Assets</h3>
+          <div className="flex flex-wrap gap-2">
+            {getDiscoveredAssets().map(asset => (
+              <span key={asset} className="px-2 py-1 bg-white rounded border" style={{borderLeftColor: getAssetColor(asset), borderLeftWidth: '4px'}}>
+                {asset}
+              </span>
+            ))}
           </div>
-          
-          {showDebugInfo && (
-            <div className="mt-3 text-xs font-mono bg-gray-100 p-3 rounded max-h-60 overflow-auto">
-              <p>Using data from: {apiStatus?.success ? 'API' : 'Mock Data'}</p>
-              {Array.isArray(transactions) && transactions.length > 0 && (
-                <div className="mt-2">
-                  <p className="font-medium">Sample transaction:</p>
-                  <pre>{JSON.stringify(transactions[0], null, 2)}</pre>
-                </div>
-              )}
-            </div>
-          )}
+          <h3 className="font-semibold mt-4 mb-2">Discovered Chains</h3>
+          <div className="flex flex-wrap gap-2">
+            {getDiscoveredChains().map(chain => (
+              <span key={chain} className="px-2 py-1 bg-white rounded border">
+                {chain}
+              </span>
+            ))}
+          </div>
         </div>
       )}
       
-      <div className="mb-4">
-        <p className="font-medium mb-2">Filter by asset:</p>
-        <div className="flex flex-wrap">
+      <div className="mb-6">
+        <h3 className="text-lg font-semibold mb-4">Asset Volume</h3>
+        <div className="flex flex-wrap gap-2 mb-4">
           {assets.map(asset => (
-            <button 
-              key={asset} 
-              onClick={() => toggleAsset(asset)} 
-              className={`mr-2 mb-2 px-3 py-1 rounded-full text-sm ${
-                visibleAssets[asset] ? "bg-gray-800 text-white" : "bg-gray-200 text-gray-800"
+            <button
+              key={asset}
+              onClick={() => toggleAsset(asset)}
+              className={`px-3 py-1 rounded-full text-sm ${
+                visibleAssets[asset] 
+                  ? 'text-white' 
+                  : 'text-gray-700 bg-gray-100 hover:bg-gray-200'
               }`}
+              style={visibleAssets[asset] ? { backgroundColor: getAssetColor(asset) } : {}}
             >
-              <span 
-                className="inline-block w-2 h-2 rounded-full mr-1" 
-                style={{backgroundColor: getAssetColor(asset)}}
-              ></span>
               {asset}
             </button>
           ))}
         </div>
-      </div>
-      
-      <div className="border rounded shadow-sm p-4 bg-white mb-4">
-        <h3 className="text-sm text-gray-500">Total Value Bridged</h3>
-        <p className="text-2xl font-bold">{formatNumber(totalValue)}</p>
-        <div className="flex flex-wrap mt-2">
-          {assets.map(asset => (
-            <div key={asset} className={`mr-4 mb-2 ${!visibleAssets[asset] ? "opacity-50" : ""}`}>
-              <span 
-                className="inline-block w-3 h-3 rounded-full mr-1" 
-                style={{backgroundColor: getAssetColor(asset)}}
-              ></span>
-              {asset}: {formatNumber(calculateTotal(asset))}
+        
+        <div className="bg-white p-4 rounded-lg shadow-sm" style={{ height: '400px' }}>
+          {chartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                {assets
+                  .filter(asset => visibleAssets[asset])
+                  .map(asset => (
+                    <Area
+                      key={asset}
+                      type="monotone"
+                      dataKey={asset}
+                      stackId="1"
+                      stroke={getAssetColor(asset)}
+                      fill={getAssetColor(asset)}
+                    />
+                  ))}
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full flex items-center justify-center">
+              <p className="text-gray-500">No data available for the selected filters</p>
             </div>
-          ))}
+          )}
         </div>
       </div>
       
-      <div className="border rounded shadow-sm p-4 mb-8" style={{ height: "400px" }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
-            <YAxis />
-            <Tooltip 
-              formatter={(value) => formatNumber(value)} 
-              labelFormatter={(label) => `Date: ${label}`}
-            />
-            <Legend />
-            {assets.map(asset => (
-              visibleAssets[asset] && (
-                <Area 
-                  key={asset} 
-                  type="monotone" 
-                  dataKey={asset} 
-                  stackId="1" 
-                  stroke={getAssetColor(asset)} 
-                  fill={getAssetColor(asset)} 
-                  name={asset}
-                />
-              )
-            ))}
-          </AreaChart>
-        </ResponsiveContainer>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white p-4 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold mb-4">Top Assets by Volume</h3>
+          <div className="space-y-2">
+            {assets
+              .filter(asset => calculateTotal(asset) > 0)
+              .sort((a, b) => calculateTotal(b) - calculateTotal(a))
+              .slice(0, 5)
+              .map(asset => (
+                <div key={asset} className="flex items-center">
+                  <div 
+                    className="w-3 h-3 rounded-full mr-2" 
+                    style={{ backgroundColor: getAssetColor(asset) }}
+                  ></div>
+                  <span className="flex-1">{asset}</span>
+                  <span className="font-medium">${formatNumber(calculateTotal(asset))}</span>
+                </div>
+              ))}
+          </div>
+        </div>
+        
+        <div className="bg-white p-4 rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold mb-4">Chain Activity</h3>
+          <div className="space-y-2">
+            {getDiscoveredChains().map(chain => {
+              const count = transactions.filter(tx => 
+                tx.sourceChain === chain || tx.destinationChain === chain
+              ).length;
+              return (
+                <div key={chain} className="flex items-center">
+                  <span className="flex-1">{chain}</span>
+                  <span className="font-medium">{count} transactions</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );
