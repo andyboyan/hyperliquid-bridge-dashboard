@@ -97,10 +97,10 @@ export async function GET(request: NextRequest) {
           'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600', // Cache for 5 minutes, stale for 10
         }
       });
-    } catch (fetchError) {
+    } catch (error: unknown) {
       clearTimeout(timeoutId);
       
-      if (fetchError.name === 'AbortError') {
+      if (error instanceof Error && error.name === 'AbortError') {
         console.error('Request timed out');
         return NextResponse.json(
           { error: 'Request timed out', message: 'The Hyperlane API took too long to respond' },
@@ -108,9 +108,9 @@ export async function GET(request: NextRequest) {
         );
       }
       
-      throw fetchError; // Re-throw to be caught by outer catch
+      throw error; // Re-throw to be caught by outer catch
     }
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error in Hyperlane API route:', error);
     return NextResponse.json(
       { error: 'Internal Server Error', message: error instanceof Error ? error.message : 'Unknown error' },

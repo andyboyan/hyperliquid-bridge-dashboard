@@ -47,26 +47,14 @@ const nextConfig = {
   
   // Optimize for Vercel deployment
   experimental: {
-    // Enable server components for better performance
-    serverComponents: true,
-    // Optimize images
-    optimizeImages: true,
     // Optimize CSS
     optimizeCss: true,
-    // Enable app directory
-    appDir: true,
   },
   
   // Configure image domains for optimization
   images: {
     domains: ['explorer.hyperlane.xyz'],
     formats: ['image/avif', 'image/webp'],
-  },
-  
-  // Increase serverless function timeout for API routes
-  serverRuntimeConfig: {
-    // Will only be available on the server side
-    apiTimeout: 30000, // 30 seconds
   },
   
   // Shared runtime config (available on both client and server)
@@ -76,39 +64,6 @@ const nextConfig = {
       ? '/api/hyperlane' 
       : 'https://explorer.hyperlane.xyz/api',
   },
-  
-  // Optimize build output
-  swcMinify: true,
-  
-  // Configure Webpack for better performance
-  webpack(config, { isServer }) {
-    // Optimize bundle size
-    if (!isServer) {
-      config.optimization.splitChunks = {
-        chunks: 'all',
-        minSize: 20000,
-        maxSize: 244000,
-        minChunks: 1,
-        maxAsyncRequests: 30,
-        maxInitialRequests: 30,
-        automaticNameDelimiter: '~',
-        cacheGroups: {
-          defaultVendors: {
-            test: /[\\/]node_modules[\\/]/,
-            priority: -10,
-            reuseExistingChunk: true,
-          },
-          default: {
-            minChunks: 2,
-            priority: -20,
-            reuseExistingChunk: true,
-          },
-        },
-      };
-    }
-    
-    return config;
-  },
 };
 
-export default nextConfig;
+module.exports = nextConfig;

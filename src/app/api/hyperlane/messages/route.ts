@@ -137,10 +137,11 @@ export async function GET(request: NextRequest) {
           'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600', // Cache for 5 minutes, stale for 10
         }
       });
-    } catch (fetchError) {
+    } catch (error: unknown) {
       clearTimeout(timeoutId);
       
-      if (fetchError.name === 'AbortError') {
+      // Type guard for AbortError
+      if (error instanceof Error && error.name === 'AbortError') {
         console.error('Request timed out');
         // Return mock data in case of timeout
         const mockData = {
@@ -162,7 +163,7 @@ export async function GET(request: NextRequest) {
         });
       }
       
-      console.error('Error fetching from Hyperlane API:', fetchError);
+      console.error('Error fetching from Hyperlane API:', error);
       // Return mock data in case of error
       const mockData = {
         messages: generateMockMessages(),
@@ -176,12 +177,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(mockData, {
         headers: {
           'X-Mock-Data': 'true',
-          'X-Error': fetchError instanceof Error ? fetchError.message : 'unknown',
+          'X-Error': error instanceof Error ? error.message : 'unknown',
           'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' // Short cache for mock data
         }
       });
     }
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error in Hyperlane messages API route:', error);
     
     // Return mock data in case of error
