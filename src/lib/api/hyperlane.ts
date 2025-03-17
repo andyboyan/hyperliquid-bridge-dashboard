@@ -1082,7 +1082,7 @@ export function useHyperlaneData(timeframe: string = '24h') {
       // Perform the data fetch with retry logic
       let attempts = 0;
       const maxAttempts = 3;
-      let transactions = [];
+      let transactions: BridgeTransaction[] = [];
       
       while (attempts < maxAttempts) {
         try {
