@@ -456,7 +456,6 @@ export async function getHyperlaneTransactions(timeframe: string = '24h'): Promi
       }
     } else {
       console.log('No messages received from API');
-      console.log('Response data:', JSON.stringify(response.data));
       return generateMockTransactions();
     }
 
@@ -548,7 +547,6 @@ export async function getHyperlaneTransactions(timeframe: string = '24h'): Promi
       }
     } else {
       console.log('No messages received from API');
-      // Don't try to access response.data as it doesn't exist here
       return generateMockTransactions();
     }
   } catch (error) {
