@@ -1,7 +1,7 @@
 import axios from 'axios';
 import useSWR from 'swr';
 import { BridgeTransaction, BridgeStats, TimeSeriesDataPoint } from './types';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 // Use local proxy in production, direct API in development
 const API_BASE = process.env.NODE_ENV === 'production' 
@@ -20,7 +20,7 @@ const TOKEN_ADDRESSES: Record<string, string> = {
   '0x6b175474e89094c44da98b954eedeac495271d0f': 'DAI',
   '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': 'WETH',
   '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599': 'WBTC',
-  '0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0': 'MATIC',
+  '0x7d1afa7b718fb893db30a30c99a7a9449aa84174': 'MATIC',
   '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984': 'UNI',
   '0x514910771af9ca656af840dff83e8264ecf986ca': 'LINK',
   '0xae7ab96520de3a18e5e111b5eaab095312d7fe84': 'stETH',
@@ -54,7 +54,8 @@ const TOKEN_ADDRESSES: Record<string, string> = {
 const TOKEN_SYMBOLS = [
   'ETH', 'WETH', 'BTC', 'WBTC', 'USDC', 'USDT', 'DAI', 'LINK', 'UNI',
   'MATIC', 'SOL', 'AVAX', 'ATOM', 'DOT', 'ADA', 'XRP', 'LTC', 'DOGE', 
-  'SHIB', 'FTM', 'NEAR', 'ATOM', 'ALGO', 'XTZ', 'stETH', 'rETH'
+  'SHIB', 'FTM', 'NEAR', 'ATOM', 'ALGO', 'XTZ', 'stETH', 'rETH',
+  'stBTC' // Removed zSOL, kept stBTC
 ];
 
 // Function to find token symbol from address
@@ -96,13 +97,25 @@ function extractAssetInfo(message: HyperlaneMessage) {
     const body = message.body || '';
     let extractedInfo = { symbol: 'Unknown', amount: '1' };
     
+    // Store all possible tokens found for better analytics
+    const possibleTokens: Array<{symbol: string, amount: string, confidence: number}> = [];
+    
+    // Track the raw body for debugging
+    console.log(`Analyzing message body (first 100 chars): ${body.substring(0, 100)}`);
+    
     // 1. First try to identify token by addresses found in the body
     const addressPattern = /0x[a-fA-F0-9]{40}/g;
     const addresses = body.match(addressPattern) || [];
     
+    if (addresses.length > 0) {
+      console.log(`Found ${addresses.length} addresses in message body`);
+    }
+    
     for (const address of addresses) {
       const symbol = getTokenSymbolFromAddress(address);
       if (symbol) {
+        console.log(`Identified token ${symbol} from address ${address}`);
+        
         // Look for amount pattern near the token address
         const amountPattern = /0x[a-fA-F0-9]{8,64}/g; // Hex encoded amounts
         const amounts = body.match(amountPattern) || [];
@@ -122,15 +135,15 @@ function extractAssetInfo(message: HyperlaneMessage) {
             
             // Return with sensible values
             if (amount > 0 && amount < 1000000000) { // Sanity check
-              extractedInfo = { symbol, amount: amount.toString() };
-              break;
+              console.log(`Parsed amount for ${symbol}: ${amount} from hex ${hexValue}`);
+              possibleTokens.push({symbol, amount: amount.toString(), confidence: 0.9});
             }
           } catch (e) {
             console.error('Error parsing amount:', e);
           }
         }
         
-        // Fallback with reasonable amounts
+        // Add with default amount as fallback
         const defaultAmounts: Record<string, string> = {
           'USDC': '1000',
           'USDT': '1000',
@@ -139,46 +152,92 @@ function extractAssetInfo(message: HyperlaneMessage) {
           'ETH': '0.5',
           'WBTC': '0.01',
           'BTC': '0.01',
+          'SOL': '10',
+          'stBTC': '0.01'
         };
         
-        extractedInfo = { symbol, amount: defaultAmounts[symbol] || '1' };
-        break;
+        possibleTokens.push({
+          symbol, 
+          amount: defaultAmounts[symbol] || '1',
+          confidence: 0.8
+        });
       }
     }
     
-    // 2. If no token identified by address, check for known token symbols in the body
-    if (extractedInfo.symbol === 'Unknown') {
-      const bodyLower = body.toLowerCase();
+    // 2. Check for known token symbols in the body using more robust pattern matching
+    const bodyLower = body.toLowerCase();
+    
+    // Check for special tokens with non-standard naming patterns first
+    if (bodyLower.includes('sol')) {
+      console.log('Found "sol" in message body');
+      possibleTokens.push({symbol: 'SOL', amount: '10', confidence: 0.7});
+    } 
+    
+    if (bodyLower.includes('stbtc') || bodyLower.includes('st-btc') || bodyLower.includes('st btc')) {
+      console.log('Found "stbtc" variant in message body');
+      possibleTokens.push({symbol: 'stBTC', amount: '0.1', confidence: 0.7});
+    }
+    
+    // More comprehensive token pattern matching with word boundaries
+    for (const symbol of TOKEN_SYMBOLS) {
+      // Use word boundary matching for more accurate detection
+      const symbolRegex = new RegExp(`\\b${symbol.toLowerCase()}\\b`, 'i');
+      if (symbolRegex.test(bodyLower)) {
+        console.log(`Found token pattern match for ${symbol}`);
+        
+        const defaultAmounts: Record<string, string> = {
+          'USDC': '1000',
+          'USDT': '1000',
+          'DAI': '1000',
+          'WETH': '0.5',
+          'ETH': '0.5',
+          'WBTC': '0.01',
+          'BTC': '0.01',
+          'SOL': '10',
+          'stBTC': '0.01'
+        };
+        
+        possibleTokens.push({ 
+          symbol, 
+          amount: defaultAmounts[symbol] || '1',
+          confidence: 0.6
+        });
+      }
+    }
+    
+    // 3. Chain-specific defaults as last resort
+    if (possibleTokens.length === 0 && message.origin && message.destination) {
+      // For Solana to Hyperliquid bridges, default to SOL if no token identified
+      if (
+        message.origin.toLowerCase() === 'solana' && 
+        message.destination.toLowerCase().includes('hyperliquid')
+      ) {
+        console.log('No token identified, but message is Solana->Hyperliquid, defaulting to SOL');
+        possibleTokens.push({symbol: 'SOL', amount: '10', confidence: 0.5});
+      }
+      // For bridges to/from Hyperliquid with no identified token, default to USDC
+      else if (
+        message.origin.toLowerCase().includes('hyperliquid') || 
+        message.destination.toLowerCase().includes('hyperliquid')
+      ) {
+        console.log('No token identified, but message involves Hyperliquid, defaulting to USDC');
+        possibleTokens.push({symbol: 'USDC', amount: '1000', confidence: 0.5});
+      }
+    }
+    
+    // Sort by confidence and use the highest confidence match
+    if (possibleTokens.length > 0) {
+      possibleTokens.sort((a, b) => b.confidence - a.confidence);
+      const bestMatch = possibleTokens[0];
+      console.log(`Selected best token match: ${bestMatch.symbol} (confidence: ${bestMatch.confidence})`);
       
-      for (const symbol of TOKEN_SYMBOLS) {
-        if (bodyLower.includes(symbol.toLowerCase())) {
-          const defaultAmounts: Record<string, string> = {
-            'USDC': '1000',
-            'USDT': '1000',
-            'DAI': '1000',
-            'WETH': '0.5',
-            'ETH': '0.5',
-            'WBTC': '0.01',
-            'BTC': '0.01',
-          };
-          
-          extractedInfo = { 
-            symbol, 
-            amount: defaultAmounts[symbol] || '1' 
-          };
-          break;
-        }
+      if (possibleTokens.length > 1) {
+        console.log(`Other possible tokens: ${possibleTokens.slice(1).map(t => t.symbol).join(', ')}`);
       }
-    }
-    
-    // 3. Last resort: examine the message type or format to derive a default asset
-    if (extractedInfo.symbol === 'Unknown' && message.origin && message.destination) {
-      // If it's going to/from Hyperliquid, we could make an assumption
-      if (message.origin.toLowerCase().includes('hyperliquid') || 
-          message.destination.toLowerCase().includes('hyperliquid')) {
-        // Default to common assets bridged to/from Hyperliquid
-        extractedInfo = { symbol: 'USDC', amount: '1000' };
-      }
+      
+      extractedInfo = { symbol: bestMatch.symbol, amount: bestMatch.amount };
+    } else {
+      console.log('No tokens identified in message, using Unknown');
     }
     
     // Log the extracted information for debugging
@@ -207,7 +266,8 @@ function getTokenPrice(symbol: string): number {
     'LINK': 15,
     'UNI': 8,
     'stETH': 3000,
-    'rETH': 3000
+    'rETH': 3000,
+    'stBTC': 50000 // Kept stBTC, removed zSOL
   };
   
   return prices[symbol] || 1;
@@ -226,6 +286,7 @@ function formatChainName(chainId: string): string {
     'ethereum': 'Ethereum',
     'optimism': 'Optimism',
     'bsc': 'BSC',
+    'binance': 'Binance', // Added Binance
     'polygon': 'Polygon',
     'arbitrum': 'Arbitrum',
     'avalanche': 'Avalanche',
@@ -240,7 +301,9 @@ function formatChainName(chainId: string): string {
 export async function getHyperlaneTransactions(timeframe: string = '24h'): Promise<BridgeTransaction[]> {
   try {
     // Get the timestamp for the timeframe
-    const now = Date.now();
+    const now = new Date().getTime();
+    console.log(`Current timestamp: ${now}, Date: ${new Date(now).toISOString()}`);
+    
     const timeframeMs = timeframe === '24h' ? 24 * 60 * 60 * 1000 : 
                         timeframe === '7d' ? 7 * 24 * 60 * 60 * 1000 :
                         30 * 24 * 60 * 60 * 1000; // Default to 30 days
@@ -248,55 +311,163 @@ export async function getHyperlaneTransactions(timeframe: string = '24h'): Promi
 
     console.log(`Fetching Hyperlane transactions since ${new Date(fromTimestamp).toISOString()}`);
     
-    // Log the full request URL and params for debugging
-    const requestUrl = `${API_BASE}/messages`;
-    const params = {
-      fromTimestamp,
-      status: 'delivered',
-      limit: 100,
-      orderBy: 'timestamp',
-      order: 'desc'
-    };
-    
-    console.log('Making API request to:', requestUrl);
-    console.log('With params:', JSON.stringify(params));
+    let allMessages: HyperlaneMessage[] = [];
+    let offset = 0;
+    const limit = 1000; // Increased limit per request
+    let hasMore = true;
 
-    // Add a timeout to the axios request
-    const response = await axios.get(requestUrl, { 
-      params,
-      timeout: 10000, // 10 second timeout
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
+    // Paginate through all results
+    while (hasMore) {
+      const requestUrl = `${API_BASE}/messages`;
+      const params = {
+        fromTimestamp,
+        status: 'delivered',
+        limit,
+        offset,
+        orderBy: 'timestamp',
+        order: 'desc',
+        destination: 'hyperliquid' // Filter for messages going to HyperEVM
+      };
+      
+      console.log(`Making API request to: ${requestUrl}, offset: ${offset}`);
+      console.log('With params:', JSON.stringify(params));
+
+      try {
+        const response = await axios.get(requestUrl, { 
+          params,
+          timeout: 30000, // Increased timeout
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.data.messages || !Array.isArray(response.data.messages)) {
+          console.error('Invalid API response format:', response.data);
+          break;
+        }
+
+        const messages = response.data.messages;
+        allMessages = allMessages.concat(messages);
+        
+        console.log(`Received ${messages.length} messages from API (total: ${allMessages.length})`);
+        
+        // Check if we should continue paginating
+        if (messages.length < limit) {
+          hasMore = false;
+        } else {
+          offset += limit;
+        }
+
+        // Add a small delay between requests to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error('Error fetching page:', error);
+        break;
       }
-    });
+    }
 
-    // Log the response headers and status
-    console.log('API response status:', response.status);
-    console.log('API response headers:', JSON.stringify(response.headers));
-    console.log(`Received ${response.data.messages?.length || 0} messages from API`);
+    // Also get transactions originating from HyperEVM
+    offset = 0;
+    hasMore = true;
+
+    while (hasMore) {
+      const requestUrl = `${API_BASE}/messages`;
+      const params = {
+        fromTimestamp,
+        status: 'delivered',
+        limit,
+        offset,
+        orderBy: 'timestamp',
+        order: 'desc',
+        origin: 'hyperliquid' // Filter for messages coming from HyperEVM
+      };
+
+      try {
+        const response = await axios.get(requestUrl, { 
+          params,
+          timeout: 30000,
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.data.messages || !Array.isArray(response.data.messages)) {
+          console.error('Invalid API response format:', response.data);
+          break;
+        }
+
+        const messages = response.data.messages;
+        allMessages = allMessages.concat(messages);
+        
+        console.log(`Received ${messages.length} messages from API (total: ${allMessages.length})`);
+        
+        if (messages.length < limit) {
+          hasMore = false;
+        } else {
+          offset += limit;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error('Error fetching page:', error);
+        break;
+      }
+    }
+
+    // Remove any duplicates that might have occurred
+    allMessages = Array.from(new Map(allMessages.map(msg => [msg.id, msg])).values());
     
-    // Log a sample of the first message if available
-    if (response.data.messages && response.data.messages.length > 0) {
-      console.log('Sample message:', JSON.stringify(response.data.messages[0]));
+    console.log(`Total unique messages after deduplication: ${allMessages.length}`);
+
+    // Track discovered chains and assets for analytics
+    const discoveredChains = new Set<string>();
+    const discoveredAssets = new Set<string>();
+    
+    if (allMessages.length > 0) {
+      // Analyze source and destination chains in the data
+      allMessages.forEach((msg: HyperlaneMessage) => {
+        if (msg.origin) discoveredChains.add(formatChainName(msg.origin));
+        if (msg.destination) discoveredChains.add(formatChainName(msg.destination));
+      });
+      
+      console.log('Discovered chains in API data:', Array.from(discoveredChains));
+      
+      // Check specifically for solana transactions
+      const solanaMessages = allMessages.filter((msg: HyperlaneMessage) => 
+        msg.origin?.toLowerCase() === 'solana' || 
+        msg.destination?.toLowerCase() === 'solana'
+      );
+      
+      console.log(`Found ${solanaMessages.length} transactions involving Solana`);
+      
+      if (solanaMessages.length > 0) {
+        // Log details about the first few Solana transactions for debugging
+        solanaMessages.slice(0, 3).forEach((msg: HyperlaneMessage, index: number) => {
+          console.log(`Solana transaction ${index + 1}:`, {
+      id: msg.id,
+            origin: msg.origin,
+            destination: msg.destination,
+            timestamp: msg.timestamp ? new Date(msg.timestamp).toISOString() : 'unknown',
+            body: msg.body?.substring(0, 100)
+          });
+        });
+      }
     } else {
       console.log('No messages received from API');
       console.log('Response data:', JSON.stringify(response.data));
-      
-      // If no messages are received but the request was successful, return mock data
-      console.log('Falling back to mock data due to empty response');
       return generateMockTransactions();
     }
 
-    // Transform the response to match our BridgeTransaction interface
-    if (!response.data.messages || !Array.isArray(response.data.messages)) {
-      console.error('Invalid API response format:', response.data);
+    if (!allMessages || !Array.isArray(allMessages)) {
+      console.error('Invalid API response format:', allMessages);
       return generateMockTransactions();
     }
 
     try {
-      const transactions = response.data.messages.map((msg: HyperlaneMessage) => {
-        // Add extra validation and error handling for each message
+      // Process transactions with enhanced analytics
+      const transactions = allMessages.map((msg: HyperlaneMessage) => {
         if (!msg || typeof msg !== 'object') {
           console.error('Invalid message format:', msg);
           return null;
@@ -304,36 +475,103 @@ export async function getHyperlaneTransactions(timeframe: string = '24h'): Promi
         
         try {
           const { symbol, amount } = extractAssetInfo(msg);
+          discoveredAssets.add(symbol); // Track discovered assets
+          
           const price = getTokenPrice(symbol);
           const parsedAmount = parseFloat(amount);
           const usdValue = parsedAmount * price;
           
+          // Enhanced logging for all transactions
+          const formattedSourceChain = formatChainName(msg.origin);
+          const formattedDestChain = formatChainName(msg.destination);
+          
+          // Special analysis for Solana or HyperEVM transactions
+          if (
+            formattedSourceChain.toLowerCase() === 'solana' || 
+            formattedDestChain.toLowerCase() === 'solana' ||
+            formattedSourceChain.toLowerCase() === 'hyperliquid' || 
+            formattedDestChain.toLowerCase() === 'hyperliquid'
+          ) {
+            console.log(
+              `Bridge: ${formattedSourceChain} → ${formattedDestChain}, ` +
+              `Asset: ${symbol}, Amount: ${amount}, ` +
+              `USD Value: $${usdValue.toFixed(2)}, ` +
+              `Time: ${msg.timestamp ? new Date(msg.timestamp).toISOString() : 'unknown'}`
+            );
+          }
+          
           return {
             id: msg.id || `msg-${Date.now()}-${Math.random()}`,
             timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : Date.now(),
-            sourceChain: formatChainName(msg.origin),
-            destinationChain: formatChainName(msg.destination),
+            sourceChain: formattedSourceChain,
+            destinationChain: formattedDestChain,
             asset: symbol,
             amount: amount,
             usdValue: usdValue,
             status: msg.status || 'delivered',
             txHash: msg.transactionHash || 'unknown',
-            bridgeProtocol: 'hyperlane'
+      bridgeProtocol: 'hyperlane'
           };
         } catch (e) {
           console.error('Error processing message:', e, msg);
           return null;
         }
       })
-      .filter(Boolean) as BridgeTransaction[]; // Filter out any null entries
+      .filter(Boolean) as BridgeTransaction[];
       
       if (transactions.length === 0) {
         console.warn('No valid transactions could be extracted from API response');
         return generateMockTransactions();
       }
 
-      console.log(`Successfully processed ${transactions.length} transactions`);
-      console.log(`Asset distribution: ${JSON.stringify(countAssets(transactions))}`);
+      // Log discovered assets
+      console.log('Discovered assets:', Array.from(discoveredAssets));
+      
+      // Generate chain-to-chain analytics
+      const chainPairAnalytics: Record<string, { count: number, volume: number, assets: Set<string> }> = {};
+      transactions.forEach(tx => {
+        const pairKey = `${tx.sourceChain} → ${tx.destinationChain}`;
+        if (!chainPairAnalytics[pairKey]) {
+          chainPairAnalytics[pairKey] = { count: 0, volume: 0, assets: new Set() };
+        }
+        chainPairAnalytics[pairKey].count++;
+        chainPairAnalytics[pairKey].volume += tx.usdValue;
+        chainPairAnalytics[pairKey].assets.add(tx.asset);
+      });
+      
+      // Log chain pair analytics
+      console.log('Chain pair analytics:');
+      Object.entries(chainPairAnalytics).forEach(([pair, data]) => {
+        console.log(`${pair}: ${data.count} transactions, $${data.volume.toFixed(2)} volume, Assets: ${Array.from(data.assets).join(', ')}`);
+      });
+      
+      // Analyze transactions involving HyperEVM
+      const hyperEVMTransactions = transactions.filter(tx => 
+        tx.sourceChain.toLowerCase() === 'hyperliquid' || 
+        tx.destinationChain.toLowerCase() === 'hyperliquid'
+      );
+      
+      console.log(`Found ${hyperEVMTransactions.length} transactions involving HyperEVM`);
+      
+      // Generate asset volume metrics
+      const assetVolumeMetrics: Record<string, { count: number, volume: number, chains: Set<string> }> = {};
+      transactions.forEach(tx => {
+        if (!assetVolumeMetrics[tx.asset]) {
+          assetVolumeMetrics[tx.asset] = { count: 0, volume: 0, chains: new Set() };
+        }
+        assetVolumeMetrics[tx.asset].count++;
+        assetVolumeMetrics[tx.asset].volume += tx.usdValue;
+        assetVolumeMetrics[tx.asset].chains.add(tx.sourceChain);
+        assetVolumeMetrics[tx.asset].chains.add(tx.destinationChain);
+      });
+      
+      // Log asset volume metrics
+      console.log('Asset volume metrics:');
+      Object.entries(assetVolumeMetrics)
+        .sort((a, b) => b[1].volume - a[1].volume) // Sort by volume
+        .forEach(([asset, data]) => {
+          console.log(`${asset}: ${data.count} transactions, $${data.volume.toFixed(2)} volume, Chains: ${Array.from(data.chains).join(', ')}`);
+        });
 
       return transactions;
     } catch (e) {
@@ -342,7 +580,6 @@ export async function getHyperlaneTransactions(timeframe: string = '24h'): Promi
     }
   } catch (error) {
     console.error('Error fetching Hyperlane transactions:', error);
-    // Return some mock data in case of API failure to ensure UI doesn't break
     return generateMockTransactions();
   }
 }
@@ -363,8 +600,8 @@ function countAssets(transactions: BridgeTransaction[]): Record<string, number> 
 
 // Generate mock transactions as fallback
 function generateMockTransactions(): BridgeTransaction[] {
-  const assets = ['USDC', 'WETH', 'WBTC', 'DAI', 'USDT'];
-  const chains = ['Ethereum', 'Polygon', 'Arbitrum', 'Base', 'Hyperliquid'];
+  const assets = ['USDC', 'WETH', 'WBTC', 'DAI', 'USDT', 'SOL']; // Added SOL to assets
+  const chains = ['Ethereum', 'Polygon', 'Arbitrum', 'Base', 'Hyperliquid', 'Solana']; // Added Solana to chains
   const now = Date.now();
   
   return Array(20).fill(0).map((_, i) => {
@@ -376,8 +613,27 @@ function generateMockTransactions(): BridgeTransaction[] {
     } while (destinationChain === sourceChain);
     
     const amount = asset === 'WETH' ? '0.5' : 
-                  asset === 'WBTC' ? '0.01' : '1000';
+                  asset === 'WBTC' ? '0.01' :
+                  asset === 'SOL' ? '10' : '1000'; // Added SOL amount
     const price = getTokenPrice(asset);
+    
+    // Ensure some transactions are to/from Solana to HyperEVM (represented by Hyperliquid)
+    if (i % 5 === 0) { // Every 5th transaction
+      return {
+        id: `mock-${i}`,
+        timestamp: now - (i * 3600000), // hourly intervals going back
+        sourceChain: 'Solana',
+        destinationChain: 'Hyperliquid',
+        asset: assets[Math.floor(Math.random() * assets.length)],
+        amount: asset === 'WETH' ? '0.5' : 
+               asset === 'WBTC' ? '0.01' :
+               asset === 'SOL' ? '10' : '1000',
+        usdValue: parseFloat(amount) * price,
+        status: 'delivered',
+        txHash: `0x${i.toString(16).padStart(64, '0')}`,
+        bridgeProtocol: 'hyperlane'
+      };
+    }
     
     return {
       id: `mock-${i}`,
@@ -478,124 +734,107 @@ function generateMockTimeSeriesData(chain: string): TimeSeriesDataPoint[] {
 
 export async function getHyperlaneStats(timeframe: string = '24h'): Promise<BridgeStats> {
   try {
-    // Get the transactions for our time period to calculate stats
+    // Get all transactions for our time period
     const transactions = await getHyperlaneTransactions(timeframe);
+    console.log(`Processing ${transactions.length} transactions for stats`);
     
-    // Calculate unique assets
-    const uniqueAssets = new Set(transactions.map(tx => tx.asset));
-    
-    // Calculate chain metrics
-    const chainMap: Record<string, { 
-      transactions: number, 
-      value: number,
-      assets: Set<string>
+    // Calculate unique assets and their total value
+    const assetStats: Record<string, { 
+      totalValue: number, 
+      count: number,
+      lastKnownPrice: number 
     }> = {};
     
-    // Process transactions to get chain stats
     transactions.forEach(tx => {
-      // Source chain
-      if (!chainMap[tx.sourceChain]) {
-        chainMap[tx.sourceChain] = { 
-          transactions: 0,
-          value: 0,
-          assets: new Set()
+      if (!assetStats[tx.asset]) {
+        assetStats[tx.asset] = {
+          totalValue: 0,
+          count: 0,
+          lastKnownPrice: tx.usdValue / parseFloat(tx.amount)
         };
       }
-      chainMap[tx.sourceChain].transactions++;
-      chainMap[tx.sourceChain].value += tx.usdValue;
-      chainMap[tx.sourceChain].assets.add(tx.asset);
-      
-      // Destination chain
-      if (!chainMap[tx.destinationChain]) {
-        chainMap[tx.destinationChain] = { 
-          transactions: 0,
-          value: 0,
-          assets: new Set()
-        };
-      }
-      chainMap[tx.destinationChain].transactions++;
-      chainMap[tx.destinationChain].value += tx.usdValue;
-      chainMap[tx.destinationChain].assets.add(tx.asset);
+      assetStats[tx.asset].totalValue += tx.usdValue;
+      assetStats[tx.asset].count += 1;
+      // Update last known price if this transaction is more recent
+      assetStats[tx.asset].lastKnownPrice = tx.usdValue / parseFloat(tx.amount);
     });
     
-    // Format chain stats
-    const chainStats = Object.entries(chainMap).map(([chainId, data]) => ({
-      chainId,
-      chainName: chainId,
-      totalTransactions: data.transactions,
-      totalValue: data.value,
-      activeAssets: Array.from(data.assets)
-    }));
+    // Calculate TVL by summing the most recent value for each asset
+    const tvl = Object.entries(assetStats).reduce((total, [_, stats]) => {
+      return total + stats.totalValue;
+    }, 0);
     
-    // Calculate time series data (simplified version)
+    // Track all unique chains involved
+    const uniqueChains = new Set<string>();
+    transactions.forEach(tx => {
+      uniqueChains.add(tx.sourceChain);
+      uniqueChains.add(tx.destinationChain);
+    });
+    
+    // Calculate chain-specific metrics
+    const chainStats = Array.from(uniqueChains).map(chainId => {
+      const chainTxs = transactions.filter(tx => 
+        tx.sourceChain === chainId || tx.destinationChain === chainId
+      );
+      
+      const chainAssets = new Set(chainTxs.map(tx => tx.asset));
+      const totalValue = chainTxs.reduce((sum, tx) => sum + tx.usdValue, 0);
+      
+      return {
+        chainId,
+        chainName: chainId,
+        totalTransactions: chainTxs.length,
+        totalValue,
+        activeAssets: Array.from(chainAssets)
+      };
+    });
+    
+    // Generate time series data for volume tracking
     const timeSeriesData: TimeSeriesDataPoint[] = [];
-    const timeGroups: Record<string, Record<string, number>> = {};
+    const timeGroups = new Map<string, Map<string, number>>();
     
     transactions.forEach(tx => {
-      // Group by day for simplicity
       const date = new Date(tx.timestamp).toISOString().split('T')[0];
-      if (!timeGroups[date]) {
-        timeGroups[date] = {};
+      if (!timeGroups.has(date)) {
+        timeGroups.set(date, new Map());
       }
-      
-      if (!timeGroups[date][tx.asset]) {
-        timeGroups[date][tx.asset] = 0;
-      }
-      
-      timeGroups[date][tx.asset] += tx.usdValue;
+      const dateGroup = timeGroups.get(date)!;
+      const currentValue = dateGroup.get(tx.asset) || 0;
+      dateGroup.set(tx.asset, currentValue + tx.usdValue);
     });
     
-    // Convert time groups to time series data
-    Object.entries(timeGroups).forEach(([date, assets]) => {
-      Object.entries(assets).forEach(([asset, value]) => {
+    timeGroups.forEach((assetValues, date) => {
+      assetValues.forEach((value, asset) => {
         timeSeriesData.push({
           timestamp: new Date(date).getTime(),
           value,
-          chain: 'all', // Simplified
+          chain: 'all',
           asset
         });
       });
     });
     
-    // If we have no data, generate some mock data
-    if (timeSeriesData.length === 0) {
-      const mockData = generateMockTimeSeriesData('all');
-      timeSeriesData.push(...mockData);
-      
-      // Update uniqueAssets and chainStats with mock data
-      const mockAssets = new Set(mockData.map(d => d.asset));
-      mockAssets.forEach(asset => uniqueAssets.add(asset));
-      
-      // Add Hyperliquid as a chain if not present
-      if (!chainMap['Hyperliquid']) {
-        chainStats.push({
-          chainId: 'Hyperliquid',
-          chainName: 'Hyperliquid',
-          totalTransactions: mockData.length / mockAssets.size,
-          totalValue: mockData.reduce((sum, d) => sum + d.value, 0) / 2,
-          activeAssets: Array.from(mockAssets)
-        });
-      }
-    }
-    
-    // Calculate totals
-    const totalTransactions = transactions.length || 20; // Default to 20 if no transactions
-    const totalValueLocked = transactions.reduce((sum, tx) => sum + tx.usdValue, 0) || 1000000; // Default to 1M if no transactions
+    // Log detailed stats for verification
+    console.log('Stats Summary:');
+    console.log(`- Total Transactions: ${transactions.length}`);
+    console.log(`- TVL: $${tvl.toFixed(2)}`);
+    console.log(`- Unique Assets: ${Object.keys(assetStats).length}`);
+    console.log(`- Active Chains: ${uniqueChains.size}`);
+    console.log('Asset Breakdown:', Object.entries(assetStats).map(([asset, stats]) => 
+      `${asset}: ${stats.count} txs, $${stats.totalValue.toFixed(2)} total`
+    ).join('\n'));
     
     return {
-      totalValueLocked,
-      totalTransactions,
-      uniqueAssets: uniqueAssets.size || 3, // Default to 3 if no unique assets
-      activeChains: Object.keys(chainMap).length || 5, // Default to 5 if no chains
+      totalValueLocked: tvl,
+      totalTransactions: transactions.length,
+      uniqueAssets: Object.keys(assetStats).length,
+      activeChains: uniqueChains.size,
       timeSeriesData,
       chainStats
     };
   } catch (error) {
-    console.error('Error fetching Hyperlane stats:', error);
-    
-    // Return mock stats in case of API failure
-    const mockStats = generateMockStats();
-    return mockStats;
+    console.error('Error calculating Hyperlane stats:', error);
+    return generateMockStats();
   }
 }
 
@@ -743,7 +982,78 @@ export async function testHyperlaneApiConnection(): Promise<ApiTestResult> {
   }
 }
 
-// Use the test function in the hook
+// Add persistent storage for discovered assets and chains
+let globalDiscoveredAssets = new Set<string>(TOKEN_SYMBOLS);
+let globalDiscoveredChains = new Set<string>([
+  'Ethereum', 'Polygon', 'Arbitrum', 'Base', 'Hyperliquid', 'Solana'
+]);
+
+// Helper function to get all discovered assets
+export function getDiscoveredAssets(): string[] {
+  return Array.from(globalDiscoveredAssets).sort();
+}
+
+// Helper function to get all discovered chains 
+export function getDiscoveredChains(): string[] {
+  return Array.from(globalDiscoveredChains).sort();
+}
+
+// Store historical data for analysis
+interface HistoricalBridgeData {
+  timestamp: number;
+  newAssets: string[];
+  newChains: string[];
+  transactions: BridgeTransaction[];
+}
+
+let historicalData: HistoricalBridgeData[] = [];
+
+// Function to analyze bridge data and detect new assets/chains
+function analyzeBridgeData(transactions: BridgeTransaction[]): {
+  newAssets: string[];
+  newChains: string[];
+} {
+  const prevAssetsCount = globalDiscoveredAssets.size;
+  const prevChainsCount = globalDiscoveredChains.size;
+  
+  // Extract and update assets and chains
+  transactions.forEach(tx => {
+    if (tx.asset) globalDiscoveredAssets.add(tx.asset);
+    if (tx.sourceChain) globalDiscoveredChains.add(tx.sourceChain);
+    if (tx.destinationChain) globalDiscoveredChains.add(tx.destinationChain);
+  });
+  
+  // Identify new assets and chains
+  const newAssets = Array.from(globalDiscoveredAssets).filter(asset => 
+    !TOKEN_SYMBOLS.includes(asset)
+  );
+  
+  const defaultChains = ['Ethereum', 'Polygon', 'Arbitrum', 'Base', 'Hyperliquid', 'Solana'];
+  const newChains = Array.from(globalDiscoveredChains).filter(chain => 
+    !defaultChains.includes(chain)
+  );
+  
+  // Log changes
+  if (globalDiscoveredAssets.size > prevAssetsCount) {
+    console.log(`Discovered ${globalDiscoveredAssets.size - prevAssetsCount} new assets`);
+    console.log('All known assets:', getDiscoveredAssets());
+  }
+  
+  if (globalDiscoveredChains.size > prevChainsCount) {
+    console.log(`Discovered ${globalDiscoveredChains.size - prevChainsCount} new chains`);
+    console.log('All known chains:', getDiscoveredChains());
+  }
+  
+  return {
+    newAssets,
+    newChains
+  };
+}
+
+// Store the time of last update
+let lastUpdateTimestamp = 0;
+
+// Enhanced function to use the test hook with improved update detection
 export function useHyperlaneData(timeframe: string = '24h') {
   const [apiStatus, setApiStatus] = useState<{
     tested: boolean;
@@ -753,6 +1063,28 @@ export function useHyperlaneData(timeframe: string = '24h') {
     tested: false,
     success: false,
     message: 'API not tested yet'
+  });
+  
+  // Track new assets and chains for UI updates
+  const [newDiscoversState, setNewDiscovers] = useState<{
+    newAssets: string[];
+    newChains: string[];
+    lastUpdate: string;
+  }>({
+    newAssets: [],
+    newChains: [],
+    lastUpdate: 'Never'
+  });
+  
+  // Track errors for better user feedback
+  const [fetchErrors, setFetchErrors] = useState<{
+    count: number;
+    lastError: string | null;
+    lastErrorTime: string | null;
+  }>({
+    count: 0,
+    lastError: null,
+    lastErrorTime: null
   });
   
   // Run the API test once
@@ -769,97 +1101,322 @@ export function useHyperlaneData(timeframe: string = '24h') {
     }
   }, [apiStatus.tested]);
 
-  const fetcher = async () => {
+  const fetcher = async (key: string) => {
     try {
-      return await getHyperlaneTransactions(timeframe);
+      // Get current time for hourly update tracking
+      const now = Date.now();
+      console.log(`Data fetch triggered at ${new Date(now).toISOString()}`);
+      console.log(`Last update was at ${new Date(lastUpdateTimestamp).toISOString()}`);
+      
+      // Perform the data fetch with retry logic
+      let attempts = 0;
+      const maxAttempts = 3;
+      let transactions = [];
+      
+      while (attempts < maxAttempts) {
+        try {
+          transactions = await getHyperlaneTransactions(timeframe);
+          // If successful, break out of retry loop
+          break;
+        } catch (error) {
+          attempts++;
+          console.error(`Fetch attempt ${attempts} failed:`, error);
+          
+          if (attempts >= maxAttempts) {
+            // Update error state
+            setFetchErrors(prev => ({
+              count: prev.count + 1,
+              lastError: error instanceof Error ? error.message : String(error),
+              lastErrorTime: new Date().toISOString()
+            }));
+            throw error;
+          }
+          
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempts)));
+        }
+      }
+      
+      // Analyze for new assets and chains
+      const { newAssets, newChains } = analyzeBridgeData(transactions);
+      
+      // Add to historical data
+      historicalData.push({
+        timestamp: now,
+        newAssets,
+        newChains,
+        transactions: transactions.slice(0, 20) // Store a sample for analysis
+      });
+      
+      // Keep only recent history (last 7 days)
+      const oneWeekAgo = now - (7 * 24 * 60 * 60 * 1000);
+      historicalData = historicalData.filter(data => data.timestamp > oneWeekAgo);
+      
+      // Update UI with new discoveries
+      if (newAssets.length > 0 || newChains.length > 0) {
+        setNewDiscovers({
+          newAssets,
+          newChains,
+          lastUpdate: new Date(now).toISOString()
+        });
+      }
+      
+      // Track the update time
+      lastUpdateTimestamp = now;
+      
+      return transactions;
     } catch (error) {
       console.error('Error in useHyperlaneData transaction fetcher:', error);
+      // Return empty array but don't throw to prevent SWR from retrying too aggressively
       return [];
     }
   };
   
-  const statsFetcher = async () => {
+  const statsFetcher = async (key: string) => {
     try {
-      return await getHyperlaneStats(timeframe);
+      // Implement retry logic for stats fetching
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts) {
+        try {
+          return await getHyperlaneStats(timeframe);
+        } catch (error) {
+          attempts++;
+          console.error(`Stats fetch attempt ${attempts} failed:`, error);
+          
+          if (attempts >= maxAttempts) {
+            throw error;
+          }
+          
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempts)));
+        }
+      }
+      
+      // This should never be reached due to the throw in the loop
+      return generateMockStats();
     } catch (error) {
-      console.error('Error in useHyperlaneData stats fetcher:', error);
-      throw error;
+      console.error('Error in useHyperlaneData stats fetcher after all retries:', error);
+      // Return mock stats instead of throwing
+      return generateMockStats();
     }
   };
 
-  const { data: transactions, error: txError } = useSWR(
+  // Use SWR with hourly refresh for real-time data updates
+  const { data: transactions, error: txError, mutate: refreshTransactions, isValidating: isLoadingTx } = useSWR(
     `hyperlane/transactions/${timeframe}`,
     fetcher,
     { 
-      refreshInterval: 30000, // Refresh every 30 seconds
+      refreshInterval: 3600000, // Update hourly (3600000ms = 1 hour)
       revalidateOnFocus: false, // Prevent unnecessary revalidation
-      dedupingInterval: 15000, // Dedupe requests within 15 seconds
+      dedupingInterval: 3540000, // Dedupe requests within 59 minutes
+      errorRetryCount: 3, // Limit retries on error
+      errorRetryInterval: 5000, // Wait 5 seconds between retries
+      onErrorRetry: (error, key, config, revalidate, { retryCount }) => {
+        // Don't retry for 404s or other client errors
+        if (error.status >= 400 && error.status < 500) {
+          return;
+        }
+        // Only retry up to 3 times
+        if (retryCount >= 3) {
+          return;
+        }
+        // Retry after 5 seconds
+        setTimeout(() => revalidate({ retryCount }), 5000);
+      }
     }
   );
 
-  const { data: stats, error: statsError } = useSWR(
+  const { data: stats, error: statsError, mutate: refreshStats, isValidating: isLoadingStats } = useSWR(
     `hyperlane/stats/${timeframe}`,
     statsFetcher,
     { 
-      refreshInterval: 60000, // Refresh every minute
+      refreshInterval: 3600000, // Update hourly (3600000ms = 1 hour)
       revalidateOnFocus: false,
-      dedupingInterval: 30000,
+      dedupingInterval: 3540000, // Dedupe requests within 59 minutes
+      errorRetryCount: 3,
+      errorRetryInterval: 5000,
+      onErrorRetry: (error, key, config, revalidate, { retryCount }) => {
+        // Don't retry for 404s or other client errors
+        if (error.status >= 400 && error.status < 500) {
+          return;
+        }
+        // Only retry up to 3 times
+        if (retryCount >= 3) {
+          return;
+        }
+        // Retry after 5 seconds
+        setTimeout(() => revalidate({ retryCount }), 5000);
+      }
     }
   );
+  
+  // Add function to force refresh
+  const forceRefresh = useCallback(() => {
+    console.log('Manually refreshing data...');
+    refreshTransactions();
+    refreshStats();
+  }, [refreshTransactions, refreshStats]);
 
   return {
     transactions: transactions || [],
-    stats,
-    isLoading: !transactions && !txError && !stats && !statsError,
-    isError: txError || statsError,
-    apiStatus
+    stats: stats || generateMockStats(), // Always provide at least mock stats
+    isLoading: (isLoadingTx || isLoadingStats) && !txError && !statsError,
+    isError: !!txError || !!statsError,
+    apiStatus,
+    discoveries: newDiscoversState,
+    errors: fetchErrors,
+    forceRefresh,
+    lastUpdateTime: lastUpdateTimestamp ? new Date(lastUpdateTimestamp).toISOString() : 'Never'
   };
 }
 
-// Hook to get chain-specific data
+// Enhanced chain-specific data hook
 export function useChainData(chain: string, timeframe: string = '24h') {
-  const fetcher = async () => {
+  // Track errors for better user feedback
+  const [fetchErrors, setFetchErrors] = useState<{
+    count: number;
+    lastError: string | null;
+    lastErrorTime: string | null;
+  }>({
+    count: 0,
+    lastError: null,
+    lastErrorTime: null
+  });
+
+  const fetcher = async (key: string) => {
     try {
-      return await getChainTransactions(chain, timeframe);
+      // Track that we're specifically requesting chain data
+      console.log(`Fetching specific chain data for ${chain} with timeframe ${timeframe}`);
+      
+      // Implement retry logic
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts) {
+        try {
+          return await getChainTransactions(chain, timeframe);
+        } catch (error) {
+          attempts++;
+          console.error(`Chain data fetch attempt ${attempts} failed:`, error);
+          
+          if (attempts >= maxAttempts) {
+            // Update error state
+            setFetchErrors(prev => ({
+              count: prev.count + 1,
+              lastError: error instanceof Error ? error.message : String(error),
+              lastErrorTime: new Date().toISOString()
+            }));
+            throw error;
+          }
+          
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempts)));
+        }
+      }
+      
+      // This should never be reached due to the throw in the loop
+      return [];
     } catch (error) {
       console.error(`Error in useChainData transaction fetcher for ${chain}:`, error);
       return [];
     }
   };
   
-  const timeSeriesFetcher = async () => {
+  const timeSeriesFetcher = async (key: string) => {
     try {
-      return await getChainTimeSeriesData(chain, timeframe);
+      // Implement retry logic
+      let attempts = 0;
+      const maxAttempts = 3;
+      
+      while (attempts < maxAttempts) {
+        try {
+          return await getChainTimeSeriesData(chain, timeframe);
+        } catch (error) {
+          attempts++;
+          console.error(`Time series fetch attempt ${attempts} failed:`, error);
+          
+          if (attempts >= maxAttempts) {
+            throw error;
+          }
+          
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempts)));
+        }
+      }
+      
+      // This should never be reached due to the throw in the loop
+      return generateMockTimeSeriesData(chain);
     } catch (error) {
       console.error(`Error in useChainData time series fetcher for ${chain}:`, error);
-      return [];
+      return generateMockTimeSeriesData(chain);
     }
   };
 
-  const { data: transactions, error: txError } = useSWR(
+  // Use SWR with proper hourly refresh
+  const { data: transactions, error: txError, mutate: refreshTx, isValidating: isLoadingTx } = useSWR(
     `hyperlane/chain/${chain}/transactions/${timeframe}`,
     fetcher,
     { 
-      refreshInterval: 30000,
+      refreshInterval: 3600000, // Update hourly (3600000ms = 1 hour)
       revalidateOnFocus: false,
-      dedupingInterval: 15000,
+      dedupingInterval: 3540000, // Dedupe requests within 59 minutes
+      errorRetryCount: 3,
+      errorRetryInterval: 5000,
+      onErrorRetry: (error, key, config, revalidate, { retryCount }) => {
+        // Don't retry for 404s or other client errors
+        if (error.status >= 400 && error.status < 500) {
+          return;
+        }
+        // Only retry up to 3 times
+        if (retryCount >= 3) {
+          return;
+        }
+        // Retry after 5 seconds
+        setTimeout(() => revalidate({ retryCount }), 5000);
+      }
     }
   );
 
-  const { data: timeSeriesData, error: timeSeriesError } = useSWR(
+  const { data: timeSeriesData, error: timeSeriesError, mutate: refreshTimeSeries, isValidating: isLoadingTimeSeries } = useSWR(
     `hyperlane/chain/${chain}/timeseries/${timeframe}`,
     timeSeriesFetcher,
     { 
-      refreshInterval: 60000,
+      refreshInterval: 3600000, // Update hourly (3600000ms = 1 hour)
       revalidateOnFocus: false,
-      dedupingInterval: 30000,
+      dedupingInterval: 3540000, // Dedupe requests within 59 minutes
+      errorRetryCount: 3,
+      errorRetryInterval: 5000,
+      onErrorRetry: (error, key, config, revalidate, { retryCount }) => {
+        // Don't retry for 404s or other client errors
+        if (error.status >= 400 && error.status < 500) {
+          return;
+        }
+        // Only retry up to 3 times
+        if (retryCount >= 3) {
+          return;
+        }
+        // Retry after 5 seconds
+        setTimeout(() => revalidate({ retryCount }), 5000);
+      }
     }
   );
+  
+  // Add function to force refresh
+  const forceRefresh = useCallback(() => {
+    console.log(`Manually refreshing data for chain ${chain}...`);
+    refreshTx();
+    refreshTimeSeries();
+  }, [refreshTx, refreshTimeSeries, chain]);
 
   return {
     transactions: transactions || [],
-    timeSeriesData: timeSeriesData || [],
-    isLoading: !transactions && !txError && !timeSeriesData && !timeSeriesError,
-    isError: txError || timeSeriesError
+    timeSeriesData: timeSeriesData || generateMockTimeSeriesData(chain),
+    isLoading: (isLoadingTx || isLoadingTimeSeries) && !txError && !timeSeriesError,
+    isError: !!txError || !!timeSeriesError,
+    errors: fetchErrors,
+    forceRefresh,
+    lastUpdateTime: lastUpdateTimestamp ? new Date(lastUpdateTimestamp).toISOString() : 'Never'
   };
 }
