@@ -469,7 +469,7 @@ export async function getHyperlaneTransactions(timeframe: string = '24h'): Promi
           }
           
           // Extract asset information from the message
-          const { asset, amount } = extractAssetInfo(msg);
+          const { symbol: asset, amount } = extractAssetInfo(msg);
           
           // Get the price for this asset
           const price = getTokenPrice(asset);
